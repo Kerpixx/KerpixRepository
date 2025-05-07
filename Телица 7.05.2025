@@ -1,0 +1,206 @@
+#define LUMINOSITY_SENSOR_PIN A3      // пин подключения датчика освещённости (фотодатчик)
+#define SOIL_HUMIDITRY_SENSOR_PIN A1  // пин подключения датчика влажности почвы
+#define DHT_SENSOR_PIN 8              // пин подключения датчика температуры и влажности DHT
+#define LED_PIN 6                     // пин для светодиода (индикатор)
+#define WATER_PUMP_PIN 5              // пин управления водяным насосом
+#define HEAT_PIN 4                    // пин для нагревательного элемента
+#define FAN_PIN 7                     // пин для вентилятора
+
+#include <TroykaDHT.h>  // библиотека для работы с датчиком DHT от Troyka
+
+DHT dht(12, DHT11);             // создание объекта dht на пине 12 для работы с датчиком DHT11
+char Humidity_Fan_ON = 15;      // влажность воздуха, при которой включается вентилятор (%)
+char Heat_temperature_ON = 15;  // температура, при которой включается обогрев (°C)
+char Fan_temperature_ON = 30;   // температура, при которой включается вентилятор (°C)
+
+const long interval = 1800000;  // интервал 30 минут (в миллисекундах)
+
+// Класс для работы с таймерами
+class Timer {
+private:
+  unsigned long previousMillis = 0;   // время последнего события
+  bool pumpIsOn = false;              // флаг для отслеживания состояния насоса
+  unsigned long pumpStartTime = 0;    // время начала работы насоса
+  const long pumpDuration = 1800000;  // продолжительность работы насоса в миллисекундах (30 минут)
+
+public:
+  // Метод для включения насоса в 12:00, 16:00, 20:00 и выключения через 30 минут
+  void update() {
+    unsigned long currentMillis = millis();                // текущее время в миллисекундах
+    unsigned long hours = (currentMillis / 3600000) % 24;  // преобразуем миллисекунды в часы
+
+    // Проверяем, пришло ли время включить насос (12:00, 16:00, 20:00)
+    if ((hours == 12 || hours == 16 || hours == 20) && !pumpIsOn) {
+      startPump(currentMillis);
+    }
+
+    // Если насос включен, проверяем прошло ли 30 минут
+    if (pumpIsOn && (currentMillis - pumpStartTime >= pumpDuration)) {
+      stopPump();
+    }
+  }
+
+  // Метод для начала работы насоса
+  void startPump(unsigned long currentMillis) {
+    digitalWrite(WATER_PUMP_PIN, HIGH);  // Включаем насос
+    pumpIsOn = true;
+    pumpStartTime = currentMillis;  // Запоминаем время начала работы насоса
+  }
+
+  // Метод для остановки насоса
+  void stopPump() {
+    digitalWrite(WATER_PUMP_PIN, LOW);  // Выключаем насос
+    pumpIsOn = false;
+  }
+};
+
+Timer waterPumpTimer;
+
+class LampController {
+private:
+  unsigned short lightThresholdTurnOn = 350;  // порог освещённости, при котором включается лампа
+public:
+
+  // Метод для включения лампы
+  void turnOn() {
+    digitalWrite(LED_PIN, HIGH);
+  }
+  // Метод для выключения лампы
+  void turnOff() {
+    digitalWrite(LED_PIN, LOW);
+  }
+};
+
+class LuminositySensor {
+public:
+  // Метод для чтения текущего уровня освещённости
+  unsigned short read() {
+    return analogRead(LUMINOSITY_SENSOR_PIN);  // Возвращает значение от 0 до 1023
+  }
+};
+
+class WaterPump {
+public:
+  // Метод для включения помпы
+  void turnOn() {
+    digitalWrite(WATER_PUMP_PIN, HIGH);  // Включаем помпу
+  }
+
+  // Метод для выключения помпы
+  void turnOff() {
+    digitalWrite(WATER_PUMP_PIN, LOW);  // Выключаем помпу
+  }
+};
+
+class SoilHumiditySensor {
+private:
+  unsigned short minSoilMoistureLevel = 800;  // Минимальное значение влажности почвы для включения полива
+
+public:
+  // Метод для получения текущего значения влажности почвы с датчика
+  unsigned short getCurrentSoilMoisture() {
+    return analogRead(SOIL_HUMIDITRY_SENSOR_PIN);  // Чтение с датчика влажности
+  }
+
+  // Метод для проверки, нужно ли включить помпу, основываясь на текущем значении влажности
+  bool checkIfWateringNeeded() {
+    unsigned short currentMoisture = getCurrentSoilMoisture();
+    return currentMoisture <= minSoilMoistureLevel;  // Возвращает true, если влажность ниже минимального уровня
+  }
+};
+
+class Fan {
+public:
+  // Метод для включения вентилятора
+  static void turnOn() {
+    digitalWrite(FAN_PIN, HIGH);  // Включаем вентилятор
+  }
+
+  // Метод для выключения вентилятора
+  static void turnOff() {
+    digitalWrite(FAN_PIN, LOW);  // Выключаем вентилятор
+  }
+};
+
+class Heater {
+public:
+  // Метод для включения нагревателя
+  static void turnOn() {
+    digitalWrite(HEAT_PIN, HIGH);  // Включаем нагреватель
+  }
+
+  // Метод для выключения нагревателя
+  static void turnOff() {
+    digitalWrite(HEAT_PIN, LOW);  // Выключаем нагреватель
+  }
+};
+
+// Класс для управления всей системой
+class SystemController {
+private:
+  LampController lamp;
+  LuminositySensor luminositySensor;
+  WaterPump waterPump;
+  SoilHumiditySensor soilHumiditySensor;
+  Fan fan;
+  Heater heater;
+public:
+  void update() {
+    // Чтение данных с датчика DHT
+    float temperature = dht.getTemperatureC();
+    float humidity = dht.getHumidity();
+
+    // Включение вентиляторов, если температура или влажность слишком высокие
+    if (temperature >= Fan_temperature_ON || humidity >= Humidity_Fan_ON) {
+      fan.turnOn();
+    } else {
+      fan.turnOff();
+    }
+
+    // Включение нагревателя, если температура слишком низкая
+    if (temperature <= Heat_temperature_ON) {
+      heater.turnOn();
+    } else {
+      heater.turnOff();
+    }
+
+    // Включение помпы, если влажность почвы ниже минимального уровня или влажность воздуха низкая
+    if (soilHumiditySensor.checkIfWateringNeeded()) {
+      waterPump.turnOn();
+    } else {
+      waterPump.turnOff();
+    }
+
+    // Управление лампой на основе уровня освещенности
+    if (luminositySensor.read() <= 350) {
+      lamp.turnOn();
+    } else {
+      lamp.turnOff();
+    }
+  }
+};
+
+// Создаем экземпляр системы
+SystemController systemController;  // Создаем объект для управления системой
+
+void setup() {
+  // Инициализация серийного порта
+  Serial.begin(9600);
+
+  // Инициализация пинов
+  pinMode(LUMINOSITY_SENSOR_PIN, INPUT);      // Пин для датчика освещенности (фоторезистор)
+  pinMode(SOIL_HUMIDITRY_SENSOR_PIN, INPUT);  // Пин для датчика влажности почвы
+  pinMode(DHT_SENSOR_PIN, INPUT);             // Пин для датчика температуры и влажности DHT
+
+  pinMode(LED_PIN, OUTPUT);         // Пин для светодиода (индикатор)
+  pinMode(WATER_PUMP_PIN, OUTPUT);  // Пин для водяного насоса
+  pinMode(HEAT_PIN, OUTPUT);        // Пин для нагревательного элемента
+  pinMode(FAN_PIN, OUTPUT);         // Пин для вентилятора
+  dht.begin();                      // Инициализация датчика DHT
+}
+
+void loop() {
+  // Обновление состояния системы
+  systemController.update();
+  waterPumpTimer.update();
+}
